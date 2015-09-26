@@ -1,0 +1,79 @@
+/*
+  Charles Asiama
+  CopyFile is a program that copies an existing file to a new file.
+*/
+
+#include <fcntl.h>
+#include <stdio.h>
+#include <sys/types.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <time.h>
+
+#define OUTPUT_MODE 0700
+
+int main (int argc, char* argv[]){
+
+	int byte = 0, sourceFile = 0, destFile = 0, readFile = 0, writeFile = 0, bytesWritten = 0;
+	byte = atoi(argv[1]);
+	char buffer[byte];
+	clock_t startClock = 0, endClock = 0;
+	double clockTime = 0, normalTime = 0;
+	time_t startSeconds = 0, endSeconds = 0;
+
+	
+	//Exit program if user does not enter 4 inputs.
+	if (argc != 4){
+	   printf("Please enter the name of program, the size of buffer, source and destination file respectively!\n");
+	   exit(1);
+	}
+	
+	printf("%d\n", byte);
+
+	//Open Source File.
+	sourceFile = open(argv[2], O_RDONLY);
+	if (sourceFile < 0 ){
+	   printf("Error!!! Could not open File. Verify if the file exist or you entered the correct name of file\n");
+	   exit(1);
+	}
+
+	//Create Destination File.
+	destFile = creat(argv[3], OUTPUT_MODE);
+	if (sourceFile < 0 ){
+	   printf("Error!!! Could not create File.\n");
+	   exit(1);
+	}
+	
+	//Start CPU clock time.
+	startClock = clock();
+	startSeconds = time(NULL);
+
+	//Copy Source File data to Destination File.
+	do{
+	   readFile = read(sourceFile, buffer, byte);
+	   if (readFile > 0){
+		printf("Reading file with buffer size of %d bytes.\n", readFile);
+		writeFile = write(destFile, buffer, readFile);
+		bytesWritten += readFile;
+		printf("Writing file with buffer size of %d bytes.\n", writeFile);
+		if (writeFile <= 0){
+		    printf("Error!!! Could not create File.\n");
+	   	    exit(1);
+		}
+	   }	   
+	}while (readFile > 0);
+
+	endClock = clock();
+	endSeconds = time(NULL);
+	normalTime = ((double) (endSeconds - startSeconds));
+	clockTime = ((double) (endClock - startClock));
+
+	printf("Copied %d bytes at a rate of  %0.2f CPU clock per second and %2.2f normal seconds.\n", bytesWritten, clockTime, normalTime);
+
+	//Close Source and Destination Files.
+	close(readFile);
+	close(writeFile);
+
+    return 0;
+    exit(1);
+}
