@@ -52,10 +52,10 @@ int main (int argc, char* argv[]){
 	do{
 	   readFile = read(sourceFile, buffer, byte);
 	   if (readFile > 0){
-		printf("Reading file with buffer size of %d bytes.\n", readFile);
+		//printf("Reading file with buffer size of %d bytes.\n", readFile);
 		writeFile = write(destFile, buffer, readFile);
 		bytesWritten += readFile;
-		printf("Writing file with buffer size of %d bytes.\n", writeFile);
+		//printf("Writing file with buffer size of %d bytes.\n", writeFile);
 		if (writeFile <= 0){
 		    printf("Error!!! Could not create File.\n");
 	   	    exit(1);
