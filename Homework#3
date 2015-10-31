@@ -1,0 +1,402 @@
+using System.Collections.Generic;
+using System.Threading;
+
+namespace Homework3{
+    internal class BoundBufferWithMonitors<T>{
+        //Contant variable initialized to 4000000;
+        private const int MaxSize = 4000000;
+        //Create private static List field.
+        private static List<T> resultList = new List<T>();       
+        //Create private static Queue field.
+        private static Queue<T> numbersToCheck = new Queue<T>();       
+
+        //Method to add numbers to a queue.
+        public void Enqueue(T item){
+            try{
+                Monitor.Enter(numbersToCheck);
+                while (numbersToCheck.Count >= MaxSize){
+                    Monitor.Wait(numbersToCheck);
+                }
+                numbersToCheck.Enqueue(item);
+                Monitor.Pulse(numbersToCheck);
+            }finally{
+                Monitor.Exit(numbersToCheck);
+            }
+        }
+
+        //Method to remove numbers from a queue.
+        public T Dequeue(){
+            try { 
+                Monitor.Enter(numbersToCheck);
+                while(numbersToCheck.Count == 0){
+                    Monitor.Wait(numbersToCheck);
+                }
+                var item = numbersToCheck.Dequeue();
+                Monitor.Pulse(numbersToCheck);
+                return item;
+            }finally{
+                Monitor.Exit(numbersToCheck);
+            }         
+        }
+
+        //Get method to get queue.
+        public Queue<T> getQueueForNumbersToCheck(){
+            return numbersToCheck;
+        }
+
+        //Get method to get list.
+        public List<T> getResultList(){
+            return resultList;
+        }
+
+        //Set method to get list.
+        public void setResultList(List<T> primeResults){
+            lock (resultList){
+                resultList = primeResults;
+            }
+        }
+
+        //Set method to set Queue.
+        public void setQueueForNumbersToCheck(Queue<T> numbersToQueue){
+            lock (numbersToCheck){
+                numbersToCheck = numbersToQueue;
+            }
+        }       
+    }
+}
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+
+namespace Homework3
+{
+    internal class Calculator
+    {
+        private readonly BoundBufferWithMonitors<long> CalculatorboundBuffer = new BoundBufferWithMonitors<long>();
+
+        public void Run(NumberReader reader)
+        {
+           //Start Threads.
+           StartComputationThreads(CalculatorboundBuffer.getResultList(), CalculatorboundBuffer.getQueueForNumbersToCheck());
+           //Start Progress Monitor.
+           var progressMonitor = new ProgressMonitor(CalculatorboundBuffer.getResultList());
+           //Run background threads.
+           new Thread(progressMonitor.Run) { IsBackground = true }.Start();
+           //Read in numbers from notepad.
+           reader.ReadIntegers(CalculatorboundBuffer.getQueueForNumbersToCheck());
+
+           while (CalculatorboundBuffer.getQueueForNumbersToCheck().Count > 0)
+            {
+              Thread.Sleep(100);
+            }
+
+            Console.WriteLine("{0} of the numbers were prime", progressMonitor.TotalCount);
+        }
+
+        private static void StartComputationThreads(List<long> results, Queue<long> numbersToCheck)
+        {
+            var threads = CreateThreads(results, numbersToCheck);
+            threads.ForEach(thread => thread.Start());
+        }
+
+        private static List<Thread> CreateThreads(List<long> results, Queue<long> numbersToCheck)
+        {
+            var threadCount = Environment.ProcessorCount * 2;
+
+            Console.WriteLine("Using {0} compute threads and 1 I/O thread", threadCount);
+
+            var threads =
+                (from threadNumber in Sequence.Create(0, threadCount)
+                 let calculator = new IsNumberPrimeCalculator(results, numbersToCheck)
+                 let newThread =
+                     new Thread(calculator.CheckIfNumbersArePrime)
+                     {
+                         IsBackground = true,
+                         Priority = ThreadPriority.BelowNormal
+                     }
+                 select newThread).ToList();
+            return threads;
+        }
+    }
+}
+
+using System;
+using System.Collections.Generic;
+using System.Threading;
+
+namespace Homework3
+{
+    internal class IsNumberPrimeCalculator
+    {
+        private readonly BoundBufferWithMonitors<long> IsNumberPrimeCalculatorboundBuffer;
+
+        //Constructor for newly created thread.
+        public IsNumberPrimeCalculator(List<long> primeNumbers, Queue<long> numbersToCheck){
+            IsNumberPrimeCalculatorboundBuffer = new BoundBufferWithMonitors<long>();
+            IsNumberPrimeCalculatorboundBuffer.setResultList(primeNumbers);
+            IsNumberPrimeCalculatorboundBuffer.setQueueForNumbersToCheck(numbersToCheck);
+        }
+       
+        //Method to check if numbers are prime numbers.
+        public void CheckIfNumbersArePrime(){
+            long numberToCheck = 0;
+            //lock.
+            while (true){
+                try{
+                    Monitor.Enter(IsNumberPrimeCalculatorboundBuffer.getQueueForNumbersToCheck());
+                    while (IsNumberPrimeCalculatorboundBuffer.getQueueForNumbersToCheck().Count == 0){
+                        Monitor.Wait(IsNumberPrimeCalculatorboundBuffer.getQueueForNumbersToCheck());
+                    }
+                    numberToCheck = IsNumberPrimeCalculatorboundBuffer.getQueueForNumbersToCheck().Dequeue();
+                    Monitor.Pulse(IsNumberPrimeCalculatorboundBuffer.getQueueForNumbersToCheck());
+                }
+                finally{
+                    Monitor.Exit(IsNumberPrimeCalculatorboundBuffer.getQueueForNumbersToCheck());
+                }
+
+                if (IsNumberPrime(numberToCheck)){
+                    //lock.
+                    lock (IsNumberPrimeCalculatorboundBuffer.getResultList()){
+                        IsNumberPrimeCalculatorboundBuffer.getResultList().Add(numberToCheck);
+                    }
+                }
+            }
+        }
+
+
+        private static bool IsNumberPrime(long numberWeAreChecking)
+        {
+            const long firstNumberToCheck = 3;
+
+            if (numberWeAreChecking % 2 == 0)
+            {
+                return false;
+            }
+            var lastNumberToCheck = Math.Sqrt(numberWeAreChecking);
+            for (var currentDivisor = firstNumberToCheck; currentDivisor < lastNumberToCheck; currentDivisor += 2)
+            {
+                if (numberWeAreChecking % currentDivisor == 0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+}
+
+using System;
+using System.Collections.Generic;
+using System.IO;
+//using System.Threading;
+
+namespace Homework3
+{
+    class NumberReader : IDisposable
+    {
+        //Create new BoundBufferWithMonitors object.
+        private readonly BoundBufferWithMonitors<long> NumberReaderboundBuffer = new BoundBufferWithMonitors<long>();
+        private readonly TextReader _reader;
+
+        public NumberReader(FileInfo file)
+        {
+            _reader = new StreamReader(new BufferedStream(new FileStream(
+                file.FullName, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan), 65536));
+        }
+
+        public void ReadIntegers(Queue<long> numbersToCheck){
+            String line;
+            string[] stringOfIntgers = _reader.ReadToEnd().Split('\n');
+            int length = stringOfIntgers.Length;
+            if (length > 0){
+                for (int count = 0; count < length - 1; count++){
+                    line = stringOfIntgers[count].TrimEnd('\r');
+                    var value = long.Parse(line);
+                    NumberReaderboundBuffer.Enqueue(value);
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            _reader.Dispose();
+        }
+    }
+}
+
+using System;
+using System.Collections.Generic;
+using System.IO;
+
+namespace Homework3 {
+    internal class NumberWriter : IDisposable {
+        private readonly TextWriter _writer;
+
+        public NumberWriter(FileInfo file) {
+            if (File.Exists(file.FullName)) {
+                File.Delete(file.FullName);
+            }
+            _writer = new StreamWriter(new BufferedStream(new FileStream(
+                file.FullName, FileMode.Create, FileAccess.Write, FileShare.None, 8192, FileOptions.SequentialScan)));
+        }
+
+        public void WriteIntegers(IEnumerable<long> values) {
+            foreach (var value in values) {
+                _writer.WriteLine(value);
+            }
+        }
+
+        public void Dispose() {
+            _writer.Dispose();
+        }
+    }
+}
+
+using System;
+using System.IO;
+
+namespace Homework3
+{
+    class Program
+    {
+        /*
+         * Homework #3
+         * 
+         * For this assignment, you will alter this program to make it thread-safe.
+         * Use whatever approach you prefer.
+         * 
+         * The current code is not thread safe. If you run it without modifications, it will probably crash.
+         * 
+         * A successful homework will produce the correct number of primes between 
+         * one million and one hundred million and make use of all of the processor 
+         * cores on the computer. A single threaded solution is not acceptable.
+         * 
+         * To run the program, you will first need to create an input data file. To do so, run
+         * this program like this:
+         * 
+         * Homework3.exe --createDataFile numbers.txt
+         * 
+         * To run the computation, run the program like this:
+         * 
+         * Homework3.exe --processDataFile numbers.txt
+         * 
+         */
+
+        static void Main(string[] args)
+        {
+
+            AppDomain.CurrentDomain.UnhandledException += HandleUnhandledException;
+
+            if (args.Length == 2)
+            {
+                var fileName = new FileInfo(args[1]);
+                if (args[0] == "--createDataFile")
+                {
+                    using (var writer = new NumberWriter(fileName))
+                    {
+                        writer.WriteIntegers(Sequence.Create(Constants.LowerBound, Constants.UpperBound));
+                    }
+                }
+                else if (args[0] == "--processDataFile")
+                {
+                    var startTime = DateTime.Now;
+                    using (var reader = new NumberReader(fileName))
+                    {
+                        new Calculator().Run(reader);
+                    }
+                    var totalSeconds = (DateTime.Now - startTime).TotalSeconds;
+                    Console.WriteLine("Program took {0} seconds to run", totalSeconds);
+                    Console.ReadLine();
+                }
+                else
+                {
+                    PrintUsage();
+                }
+            }
+            else
+            {
+                PrintUsage();
+            }
+        }
+
+        private static void PrintUsage()
+        {
+            Console.WriteLine("Usage:");
+            Console.WriteLine("Homework3 --createDataFile [file name]");
+            Console.WriteLine("Homework3 --processDataFile [file name]");
+            Environment.ExitCode = -1;
+        }
+
+        private static void HandleUnhandledException(object sender, UnhandledExceptionEventArgs e)
+        {
+            var exception = e.ExceptionObject as Exception;
+            if (exception != null)
+            {
+                Console.WriteLine("Unhandled exception: ");
+                Console.WriteLine(exception.Message);
+                Console.WriteLine(exception.StackTrace);
+                Environment.ExitCode = -2;
+            }
+        }
+    }
+
+    static class Constants
+    {
+        //Changed to meet requirments
+        public const long LowerBound = 1000000;
+        public const long UpperBound = 5000000;
+        public const long ArraySize = UpperBound - LowerBound;
+    }
+}
+
+using System;
+using System.Collections.Generic;
+using System.Threading;
+
+namespace Homework3
+{
+    internal class ProgressMonitor
+    {
+        private BoundBufferWithMonitors<long> progressMonitorBuffer;
+        public long TotalCount = 0;
+
+        public ProgressMonitor(List<long> results)
+        {
+            progressMonitorBuffer = new BoundBufferWithMonitors<long>();
+            progressMonitorBuffer.setResultList(results);
+        }
+
+        public void Run()
+        {
+            while (true)
+            {
+                Thread.Sleep(100);
+
+                lock (progressMonitorBuffer.getResultList())
+                {
+                    var currentcount = progressMonitorBuffer.getResultList().Count;
+                    TotalCount += currentcount;
+
+                    progressMonitorBuffer.getResultList().Clear(); // clear out the current primes to save some memory
+
+                    if (currentcount > 0)
+                        Console.WriteLine("{0} primes found so far", TotalCount);
+                }
+            }
+        }
+    }
+}
+
+using System.Collections.Generic;
+
+namespace Homework3 {
+    internal static class Sequence {
+        public static IEnumerable<long> Create(long lowerBound, long upperBound) {
+            for (var i = lowerBound; i < upperBound; i++) {
+                yield return i;
+            }
+        } 
+    }
+}
